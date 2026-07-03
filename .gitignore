@@ -17,6 +17,9 @@ thumbnails/
 # Streamlit secrets (real credentials — only the .example template is committed)
 .streamlit/secrets.toml
 
+# Test artifacts
+.pytest_cache/
+
 # Editor / OS noise
 .vscode/
 .idea/
