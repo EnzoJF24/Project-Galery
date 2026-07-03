@@ -37,8 +37,14 @@ def get_connection(db_path: Path) -> sqlite3.Connection:
 
     WAL mode lets the Streamlit viewer read the database while a scan is
     writing to it concurrently, instead of hitting "database is locked".
+
+    check_same_thread=False is required because Streamlit can execute a
+    cached resource (like this connection) from a different thread than
+    the one that created it across reruns. This app only ever accesses
+    the connection sequentially within a single script run, so relaxing
+    that check is safe here.
     """
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, check_same_thread=False)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
@@ -72,11 +78,15 @@ def _init_schema(conn: sqlite3.Connection) -> None:
 
         -- Single-row table holding facts about the most recent scan that
         -- the UI wants to surface (e.g. loose images sitting in the root
-        -- that were intentionally not indexed — see crawler.py).
+        -- that were intentionally not indexed — see crawler.py). scan_root
+        -- is stored here purely so the viewer can locate original files for
+        -- the full-resolution detail view; it is never used to decide
+        -- what's "new" during a scan (see module docstring).
         CREATE TABLE IF NOT EXISTS scan_meta (
             id                  INTEGER PRIMARY KEY CHECK (id = 1),
             last_scan_at        TEXT,
-            loose_image_count   INTEGER NOT NULL DEFAULT 0
+            loose_image_count   INTEGER NOT NULL DEFAULT 0,
+            scan_root           TEXT
         );
         """
     )
@@ -153,18 +163,19 @@ def insert_image(
 
 
 def update_scan_meta(
-    conn: sqlite3.Connection, scanned_at: str, loose_image_count: int
+    conn: sqlite3.Connection, scanned_at: str, loose_image_count: int, scan_root: str
 ) -> None:
     """Persist facts about the latest scan run for the UI to display."""
     conn.execute(
         """
-        INSERT INTO scan_meta (id, last_scan_at, loose_image_count)
-        VALUES (1, ?, ?)
+        INSERT INTO scan_meta (id, last_scan_at, loose_image_count, scan_root)
+        VALUES (1, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             last_scan_at = excluded.last_scan_at,
-            loose_image_count = excluded.loose_image_count
+            loose_image_count = excluded.loose_image_count,
+            scan_root = excluded.scan_root
         """,
-        (scanned_at, loose_image_count),
+        (scanned_at, loose_image_count, scan_root),
     )
 
 
@@ -233,4 +244,22 @@ def get_image(conn: sqlite3.Connection, image_id: int) -> Optional[sqlite3.Row]:
     """Fetch a single image row for the detail view."""
     return conn.execute(
         "SELECT * FROM images WHERE id = ?", (image_id,)
+    ).fetchone()
+
+
+def get_image_with_project(conn: sqlite3.Connection, image_id: int) -> Optional[sqlite3.Row]:
+    """Fetch an image joined with its project's key.
+
+    Used by the detail view to reconstruct the original file's absolute
+    path (scan_root + project_key + rel_path) so it can display the
+    full-resolution image rather than the thumbnail.
+    """
+    return conn.execute(
+        """
+        SELECT images.*, projects.project_key
+        FROM images
+        JOIN projects ON projects.id = images.project_id
+        WHERE images.id = ?
+        """,
+        (image_id,),
     ).fetchone()

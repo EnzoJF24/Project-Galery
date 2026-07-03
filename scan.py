@@ -125,7 +125,7 @@ def run_scan(
         index.mark_project_scanned(conn, project_id)
         conn.commit()
 
-    index.update_scan_meta(conn, scanned_at, result.loose_image_count)
+    index.update_scan_meta(conn, scanned_at, result.loose_image_count, str(root.resolve()))
     conn.commit()
     conn.close()
 
