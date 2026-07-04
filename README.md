@@ -34,13 +34,17 @@ grouped by project.
 
 ## Screenshots
 
-> _Add screenshots here after running the app locally._
+**Gallery view** — projects grouped into cards, searchable by name:
 
-`![Gallery view](docs/screenshots/gallery.png)`
+![Gallery view](docs/screenshots/gallery.png)
 
-`![Project view](docs/screenshots/project.png)`
+**Project view** — paginated grid of a single project's images:
 
-`![Image detail view](docs/screenshots/detail.png)`
+![Project view](docs/screenshots/project.png)
+
+**Image detail view** — full-resolution image with metadata:
+
+![Image detail view](docs/screenshots/detail.png)
 
 ## Architecture
 
