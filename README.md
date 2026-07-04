@@ -34,6 +34,10 @@ grouped by project.
 
 ## Screenshots
 
+**Demo** — searching, browsing a project and opening an image:
+
+![App demo](docs/screenshots/demo.gif)
+
 **Gallery view** — projects grouped into cards, searchable by name:
 
 ![Gallery view](docs/screenshots/gallery.png)
