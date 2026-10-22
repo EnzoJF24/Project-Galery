@@ -24,33 +24,35 @@ pick up what's new, so it stays current in seconds.
 source folders, nested up to 4 levels deep. You can rebuild the same demo
 server locally with one command (see [Try it with demo data](#try-it-with-demo-data)).*
 
-## Features
+## What it does
 
-- **Deep, structure-agnostic scanning** — finds images no matter how deep
-  they're nested or what the containing folders are named.
-- **Incremental re-scans** — re-running the scanner only processes images
-  that weren't indexed before. Scanning a server with thousands of existing
-  renders after adding a handful of new ones takes seconds, not minutes.
-- **Resilient to a partial scan** — if a scan is interrupted, the next run
-  picks up exactly where it left off, with no duplicate entries.
-- **Robust to bad files** — a single corrupted image is logged and skipped,
-  never aborting the whole scan.
-- **Fast, indexed browsing** — the gallery reads only from a local SQLite
-  index and pre-generated thumbnails, never the live filesystem, so it stays
-  responsive regardless of how large the source directory is.
-- **Library overview** — headline numbers for the whole index: renders,
-  projects, source folders scanned, deepest render found, total size.
-- **Search and sort projects** by name, by number of renders, or by most
+**Scan**
+- Treats every top-level folder on the share as a project and finds every
+  JPG and PNG inside it, at any depth, whatever the subfolders are called.
+- Re-scans only process images that aren't indexed yet. Adding a few renders
+  to a share with thousands takes seconds.
+- New renders dropped into an existing project are picked up too, not just
+  new projects.
+- If a scan is interrupted, the next run continues where it stopped. No
+  duplicates.
+- A corrupt image is logged and skipped. It never stops the scan.
+- Never writes to the file server. Thumbnails and the index live locally.
+
+**Browse**
+- Library overview: total renders, projects, folders scanned, deepest render
+  found and total size.
+- Search projects by name and sort them by name, number of renders or most
   recently added.
-- **"Where the renders were found"** — every project shows the folders its
-  renders actually live in, and filters the grid to one folder with a click.
-- **Detail view** with the full-resolution image, dimensions, resolution,
-  format, file size and the original path, plus previous/next stepping
-  through the project.
-- **Polished UI** — a dark, image-first theme, whole-card click targets,
-  hover micro-interactions, and proper empty states, built to feel like a
-  real product rather than a default Streamlit app. Works on mobile too.
-- **Optional shared-password protection**, configured without touching code.
+- Each project shows which folders its renders were found in. Click one to
+  see only that folder.
+- Detail view with the full-resolution image, dimensions, format, file size
+  and the original path. Previous and next step through the project.
+- The viewer only reads the local index and thumbnails, so it stays fast no
+  matter how big the share is. It works on a phone too.
+
+**Share**
+- Optional shared password, set in a config file. Without it the app runs
+  open, which is fine on localhost.
 
 ## Screenshots
 
@@ -73,44 +75,34 @@ card with a three-render preview.
 
 ## Architecture
 
-The tool is a four-stage pipeline, each stage its own module:
+Scanning and browsing are separate. The scanner writes to a local SQLite
+index; the viewer only reads from it.
 
-```
-   scan root
-       |
-       v
- 1. Crawler (gallery/crawler.py)
-    Walks each top-level folder ("project") recursively via os.walk,
-    collecting every .jpg/.jpeg/.png at any depth.
-       |
-       v
- 2. Processor (gallery/processor.py)
-    Opens each new image with Pillow: reads metadata (dimensions, format,
-    size), corrects EXIF rotation, and writes a thumbnail to disk.
-    Corrupt files are logged and skipped.
-       |
-       v
- 3. Index (gallery/index.py) — SQLite, WAL mode
-    The single source of truth. Scanning writes here; the viewer only
-    ever reads from here.
-       |
-       v
- 4. Viewer (app.py) — Streamlit
-    Reads exclusively from the index. Grid of projects, per-project
-    pagination, search, and an image detail view.
+```mermaid
+flowchart LR
+    A[1. Crawl] --> B[2. Process]
+    B --> C[3. Index]
+    C --> D[4. View]
 ```
 
-`scan.py` (the CLI) drives stages 1-3. `app.py` (Streamlit) is stage 4 and
-never touches the filesystem directly except to read already-generated
-thumbnails and, when available, the original file for the full-resolution
-detail view.
+1. **Crawl** (`gallery/crawler.py`): walks each project folder with
+   `os.walk` and collects every `.jpg`, `.jpeg` and `.png`, at any depth.
+2. **Process** (`gallery/processor.py`): opens each new image once with
+   Pillow, reads its size and format, fixes EXIF rotation and writes a
+   thumbnail. Unreadable files are logged and skipped.
+3. **Index** (`gallery/index.py`): SQLite in WAL mode, so the viewer can
+   keep reading while a scan is running.
+4. **View** (`app.py`): the Streamlit gallery. It reads the index and the
+   thumbnails, and opens an original file only for the full-size detail view.
 
-### Incremental scanning, and why it's correct
+`scan.py` runs steps 1 to 3. `app.py` is step 4.
+
+### Why re-scans never duplicate or miss anything
 
 A project's identity is its folder path **relative to the scan root**
-(e.g. `"Modern Villa"`), never an absolute path. An absolute path would
-break the moment the root is mounted under a different drive letter or the
-server folder is moved — every project would look "new" again. A bare
+(e.g. `"Juniper Lofts"`), never an absolute path. An absolute path would
+break the moment the share is mounted under a different drive letter or
+moved to another server: every project would look "new" again. A bare
 folder name without the relative-path context would break the moment two
 different projects share a name.
 
@@ -119,14 +111,14 @@ relative to its project, enforced with a `UNIQUE(project_id, rel_path)`
 constraint in SQLite. This is what makes the incremental scan correct:
 
 - Re-running a scan with no changes processes zero images.
-- Dropping new renders into an **already-indexed** project is detected —
-  the incremental check isn't limited to brand-new projects.
+- New renders dropped into an **already-indexed** project are detected.
+  The check isn't limited to brand-new projects.
 - A scan killed halfway through leaves partial progress in place; the next
   run picks up the remaining images without creating duplicates, because
   each image is committed as it's processed rather than all at once.
 
-Nothing about "is this new?" ever depends on a scan timestamp or run ID —
-only on stable filesystem structure.
+Deciding whether an image is new never depends on a scan timestamp or run
+ID, only on where the file sits.
 
 ## Requirements
 
@@ -185,7 +177,7 @@ Useful flags:
 | `--force` | Reprocess every image, even ones already indexed. |
 | `--verbose` | Print each image as it's processed, not just the summary. |
 
-Run it again any time — new projects and new images are picked up
+Run it again any time. New projects and new images are picked up
 automatically; nothing already indexed is reprocessed.
 
 ### 2. Launch the gallery
