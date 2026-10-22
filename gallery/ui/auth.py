@@ -7,6 +7,8 @@ yourself), so we don't force friction on users who haven't set one up.
 
 import streamlit as st
 
+from gallery.ui.components import login_header_html
+
 
 def _configured_password() -> str | None:
     """Read the shared password from Streamlit secrets, if any is set.
@@ -34,12 +36,13 @@ def require_password() -> bool:
     if st.session_state.get("authenticated"):
         return True
 
-    st.title("Project Gallery")
-    entered = st.text_input("Password", type="password")
-    if st.button("Enter"):
+    st.markdown(login_header_html(), unsafe_allow_html=True)
+    _, col, _ = st.columns([1, 2, 1])
+    entered = col.text_input("Password", type="password")
+    if col.button("Enter", type="primary", width="stretch"):
         if entered == configured_password:
             st.session_state["authenticated"] = True
             st.rerun()
         else:
-            st.error("Incorrect password.")
+            col.error("Incorrect password.")
     return False

@@ -187,26 +187,82 @@ def get_scan_meta(conn: sqlite3.Connection) -> Optional[sqlite3.Row]:
 # --- Read queries used by the Streamlit viewer -----------------------------
 
 
-def list_projects(conn: sqlite3.Connection, search: str = "") -> list[sqlite3.Row]:
+# Parent folder of an image, relative to its project ("" for files sitting
+# directly in the project folder). SQLite has no dirname(): rtrim() with
+# "every character except /" as the strip set cuts back to the last slash.
+_FOLDER_SQL = "rtrim(rtrim(rel_path, replace(rel_path, '/', '')), '/')"
+
+# How many folders deep an image sits below its project folder.
+_DEPTH_SQL = "(length(rel_path) - length(replace(rel_path, '/', '')))"
+
+_PROJECT_SORTS = {
+    "name": "p.name COLLATE NOCASE",
+    "images": "image_count DESC, p.name COLLATE NOCASE",
+    "recent": "p.first_seen_at DESC, p.name COLLATE NOCASE",
+}
+
+
+def list_projects(
+    conn: sqlite3.Connection, search: str = "", sort: str = "name"
+) -> list[sqlite3.Row]:
     """Return all projects with their image count, optionally name-filtered.
 
     ``search`` is matched case-insensitively as a substring of the project
-    name so the viewer's search box can filter as the user types.
+    name so the viewer's search box can filter as the user types. ``sort``
+    is one of ``"name"``, ``"images"`` (largest first) or ``"recent"``
+    (most recently discovered first).
     """
+    order_by = _PROJECT_SORTS.get(sort, _PROJECT_SORTS["name"])
     return conn.execute(
-        """
+        f"""
         SELECT
             p.id,
             p.project_key,
             p.name,
-            COUNT(i.id) AS image_count
+            p.first_seen_at,
+            COUNT(i.id) AS image_count,
+            COUNT(DISTINCT CASE WHEN i.id IS NOT NULL THEN {_FOLDER_SQL} END) AS folder_count,
+            COALESCE(SUM(i.size_bytes), 0) AS total_bytes
         FROM projects p
         LEFT JOIN images i ON i.project_id = p.id
         WHERE p.name LIKE '%' || ? || '%' COLLATE NOCASE
         GROUP BY p.id
-        ORDER BY p.name COLLATE NOCASE
+        ORDER BY {order_by}
         """,
         (search,),
+    ).fetchall()
+
+
+def get_library_stats(conn: sqlite3.Connection) -> sqlite3.Row:
+    """Headline numbers for the whole index, shown at the top of the viewer."""
+    return conn.execute(
+        f"""
+        SELECT
+            (SELECT COUNT(*) FROM projects) AS project_count,
+            COUNT(*) AS image_count,
+            COALESCE(SUM(size_bytes), 0) AS total_bytes,
+            COUNT(DISTINCT project_id || '/' || {_FOLDER_SQL}) AS folder_count,
+            COALESCE(MAX({_DEPTH_SQL}), 0) AS max_depth
+        FROM images
+        """
+    ).fetchone()
+
+
+def list_project_folders(conn: sqlite3.Connection, project_id: int) -> list[sqlite3.Row]:
+    """Every distinct folder a project's images were found in, with counts.
+
+    This is what the viewer uses to show *where* renders actually live
+    inside a project, since that structure is different in every project.
+    """
+    return conn.execute(
+        f"""
+        SELECT {_FOLDER_SQL} AS folder, COUNT(*) AS image_count
+        FROM images
+        WHERE project_id = ?
+        GROUP BY folder
+        ORDER BY folder COLLATE NOCASE
+        """,
+        (project_id,),
     ).fetchall()
 
 
@@ -217,27 +273,71 @@ def get_project_by_key(conn: sqlite3.Connection, project_key: str) -> Optional[s
     ).fetchone()
 
 
-def count_images(conn: sqlite3.Connection, project_id: int) -> int:
-    """Total number of images in a project, used to drive pagination."""
+def _folder_filter(folder: Optional[str]) -> tuple[str, tuple]:
+    """SQL fragment restricting images to one folder, or nothing for None."""
+    if folder is None:
+        return "", ()
+    return f" AND {_FOLDER_SQL} = ?", (folder,)
+
+
+def count_images(
+    conn: sqlite3.Connection, project_id: int, folder: Optional[str] = None
+) -> int:
+    """Total number of images in a project (or one of its folders).
+
+    Used to drive pagination.
+    """
+    folder_sql, folder_params = _folder_filter(folder)
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM images WHERE project_id = ?", (project_id,)
+        f"SELECT COUNT(*) AS n FROM images WHERE project_id = ?{folder_sql}",
+        (project_id, *folder_params),
     ).fetchone()
     return row["n"]
 
 
 def list_images(
-    conn: sqlite3.Connection, project_id: int, offset: int = 0, limit: int = 60
+    conn: sqlite3.Connection,
+    project_id: int,
+    offset: int = 0,
+    limit: int = 60,
+    folder: Optional[str] = None,
 ) -> list[sqlite3.Row]:
-    """Return a page of images for a project, ordered for stable pagination."""
+    """Return a page of images for a project, ordered for stable pagination.
+
+    ``folder`` optionally restricts the page to images found directly in
+    that folder (relative to the project, "" for the project folder itself).
+    """
+    folder_sql, folder_params = _folder_filter(folder)
     return conn.execute(
-        """
+        f"""
         SELECT * FROM images
-        WHERE project_id = ?
+        WHERE project_id = ?{folder_sql}
         ORDER BY rel_path
         LIMIT ? OFFSET ?
         """,
-        (project_id, limit, offset),
+        (project_id, *folder_params, limit, offset),
     ).fetchall()
+
+
+def get_image_neighbors(
+    conn: sqlite3.Connection, project_id: int, rel_path: str
+) -> sqlite3.Row:
+    """Previous/next image ids around ``rel_path`` plus its 1-based position.
+
+    Follows the same ordering as list_images(), so stepping through the
+    detail view matches the order of the project grid.
+    """
+    return conn.execute(
+        """
+        SELECT
+            (SELECT id FROM images WHERE project_id = ? AND rel_path < ?
+             ORDER BY rel_path DESC LIMIT 1) AS prev_id,
+            (SELECT id FROM images WHERE project_id = ? AND rel_path > ?
+             ORDER BY rel_path LIMIT 1) AS next_id,
+            (SELECT COUNT(*) FROM images WHERE project_id = ? AND rel_path <= ?) AS position
+        """,
+        (project_id, rel_path, project_id, rel_path, project_id, rel_path),
+    ).fetchone()
 
 
 def get_image(conn: sqlite3.Connection, image_id: int) -> Optional[sqlite3.Row]:
@@ -256,7 +356,7 @@ def get_image_with_project(conn: sqlite3.Connection, image_id: int) -> Optional[
     """
     return conn.execute(
         """
-        SELECT images.*, projects.project_key
+        SELECT images.*, projects.project_key, projects.name AS project_name
         FROM images
         JOIN projects ON projects.id = images.project_id
         WHERE images.id = ?

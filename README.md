@@ -1,16 +1,28 @@
 # Project Gallery
 
-Turn a messy file server into a searchable visual catalog.
+Turn a messy file server into a searchable visual catalog of renders.
 
-Companies with hundreds of project folders on a shared drive often end up
-with renders scattered across inconsistently named subfolders ("renders",
-"renderings", "images"...) at unpredictable depths. Non-technical team
-members shouldn't have to dig through File Explorer to find them.
+[![tests](https://github.com/EnzoJF24/Project-Galery/actions/workflows/tests.yml/badge.svg)](https://github.com/EnzoJF24/Project-Galery/actions/workflows/tests.yml)
+[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Project Gallery scans a directory of project folders, indexes every render
-image it finds (at any depth, under any subfolder naming convention) into a
-local database, and serves them through a clean, searchable web gallery
-grouped by project.
+Architecture and design studios end up with hundreds of project folders on
+a shared drive, and every team files its renders differently:
+`03_Renders/Final`, `Visualization/Interior/Lobby`, `RENDERS/old`,
+`Client Review 2024-05`... Finding "that kitchen render from the Juniper
+job" means clicking through File Explorer folder by folder. Non-technical
+staff (sales, marketing, management) usually just ask someone else.
+
+Project Gallery scans the share once, indexes every render it finds (at any
+depth, under any folder naming convention) into a local database, and serves
+them as a fast, searchable web gallery grouped by project. Re-scans only
+pick up what's new, so it stays current in seconds.
+
+![Demo: browsing projects, filtering by source folder and opening a render](docs/screenshots/demo.gif)
+
+*The demo indexes 201 renders across 18 projects and 47 differently named
+source folders, nested up to 4 levels deep. You can rebuild the same demo
+server locally with one command (see [Try it with demo data](#try-it-with-demo-data)).*
 
 ## Features
 
@@ -26,29 +38,38 @@ grouped by project.
 - **Fast, indexed browsing** — the gallery reads only from a local SQLite
   index and pre-generated thumbnails, never the live filesystem, so it stays
   responsive regardless of how large the source directory is.
-- **Search by project name**, paginated per-project grids, and a detail view
-  with full image metadata.
-- **Polished UI** — custom theming, hover micro-interactions, and empty/loading
-  states, built to feel like a real product rather than a default Streamlit app.
+- **Library overview** — headline numbers for the whole index: renders,
+  projects, source folders scanned, deepest render found, total size.
+- **Search and sort projects** by name, by number of renders, or by most
+  recently added.
+- **"Where the renders were found"** — every project shows the folders its
+  renders actually live in, and filters the grid to one folder with a click.
+- **Detail view** with the full-resolution image, dimensions, resolution,
+  format, file size and the original path, plus previous/next stepping
+  through the project.
+- **Polished UI** — a dark, image-first theme, whole-card click targets,
+  hover micro-interactions, and proper empty states, built to feel like a
+  real product rather than a default Streamlit app. Works on mobile too.
 - **Optional shared-password protection**, configured without touching code.
 
 ## Screenshots
 
-**Demo** — searching, browsing a project and opening an image:
+**Library.** Headline numbers for the whole index, and every project as a
+card with a three-render preview.
 
-![App demo](docs/screenshots/demo.gif)
+![Library view](docs/screenshots/gallery.png)
 
-**Gallery view** — projects grouped into cards, searchable by name:
-
-![Gallery view](docs/screenshots/gallery.png)
-
-**Project view** — paginated grid of a single project's images:
+**Project.** All of a project's renders, with the folders they were found in.
 
 ![Project view](docs/screenshots/project.png)
 
-**Image detail view** — full-resolution image with metadata:
+**Filtered by source folder.** One click narrows the grid to a single folder.
 
-![Image detail view](docs/screenshots/detail.png)
+![Project filtered to one folder](docs/screenshots/project_folders.png)
+
+**Render detail.** Full-resolution image, metadata and original path.
+
+![Render detail view](docs/screenshots/detail.png)
 
 ## Architecture
 
@@ -116,8 +137,8 @@ only on stable filesystem structure.
 
 ```bash
 # 1. Clone the repository
-git clone <this-repo-url>
-cd project-gallery
+git clone https://github.com/EnzoJF24/Project-Galery.git
+cd Project-Galery
 
 # 2. Create and activate a virtual environment
 python -m venv .venv
@@ -127,6 +148,21 @@ python -m venv .venv
 # 3. Install dependencies
 pip install -r requirements.txt
 ```
+
+## Try it with demo data
+
+Don't have a file server handy? Build a realistic one:
+
+```bash
+python scripts/make_demo_data.py
+python scan.py --root demo_server
+streamlit run app.py
+```
+
+The script downloads about 150 public-domain (CC0) architecture photos,
+listed with their sources in `scripts/demo_manifest.json`. It arranges them
+as 18 projects that each organize their renders differently, the same tree
+used in the screenshots above. Running it again reuses the downloads.
 
 ## Usage
 
@@ -180,6 +216,9 @@ project-gallery/
 ├── app.py                   # Streamlit entry point (the viewer)
 ├── scan.py                  # CLI entry point (the scanner)
 ├── requirements.txt
+├── scripts/
+│   ├── make_demo_data.py    # Builds a realistic demo file server
+│   └── demo_manifest.json   # CC0 photos used by the demo, with sources
 ├── .streamlit/
 │   ├── config.toml          # Theming
 │   └── secrets.toml.example # Auth template (copy to secrets.toml)
@@ -190,8 +229,8 @@ project-gallery/
 │   ├── index.py             # Stage 3: SQLite index
 │   └── ui/
 │       ├── auth.py          # Optional password gate
-│       ├── components.py    # HTML card/empty-state rendering
-│       └── styles.py        # Injected CSS
+│       ├── components.py    # HTML cards, panels and formatting helpers
+│       └── styles.py        # Injected CSS (theme, cards, layout)
 └── tests/                   # pytest suite covering the pipeline
 ```
 
@@ -210,3 +249,8 @@ Deliberately out of scope for this version, to keep it focused:
 - In-app image editing.
 - Multi-user accounts and roles.
 - Always-on deployment / containerization.
+
+## License
+
+[MIT](LICENSE). Demo photos are public domain (CC0); see
+`scripts/demo_manifest.json` for each photo's source.
